@@ -8,7 +8,7 @@ raylib, ffmpeg
 
 ## INSTALLATION
 
-gcc main.c -o ~/.local/bin/mp -lraylib
+gcc main.c -o ~/.local/bin/mp -lraylib -lavformat -lavcodec -lavutil -lswscale
 
 ## USAGE
 
