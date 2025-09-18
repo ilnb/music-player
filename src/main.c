@@ -1,40 +1,25 @@
+#include "list.h"
+#include "utils.h"
 #include <raylib.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
-  int h, m, s;
-} Time;
-
-Time get_time(int _t) {
-  Time t;
-  t.s = _t % 60;
-  _t /= 60;
-  t.m = _t % 60;
-  _t /= 60;
-  t.h = _t;
-  return t;
-}
-
-float get_sec(Time t) { return t.h * 3600 + t.m * 60 + t.s; }
-
-typedef struct {
-  bool l;
-  bool r;
+  int l, r;
 } ClickState;
 
 typedef struct {
-  int x;
-  int y;
-  int r;
+  int x, y, r;
 } Circle;
 
 typedef struct {
   Rectangle dim;
   char *header;
 } Button;
+
+typedef struct {
+  char *path;
+  list_head node;
+} Song;
 
 const float screen_width = 1280;
 const float screen_height = 720;
@@ -44,6 +29,10 @@ Button *buttons = NULL;
 Circle **circles;
 Circle progress_icon = {0};
 Rectangle **corners;
+Song *songs;
+Font font;
+int fontSize = 25;
+int spacing = 2;
 Rectangle play_button = {0};
 Rectangle progress_bar = {0};
 Music music;
@@ -56,15 +45,18 @@ float pad = 30.0;
 float gap = 20.0;
 Vector2 mouse = {0};
 Texture2D texture = {0};
-char buf[128];
+char buf[1024];
 char end[15] = {0};
 
 float start_time = 0;
 float pause_time = 0;
 Time end_time;
-bool playing = true;
-bool paused = false;
-bool done_playing = false;
+int playing = 1;
+int paused = 0;
+int done_playing = 0;
+int screen_setup_done = 0;
+int song_setup_done = 0;
+list_head list = LIST_HEAD_INIT(list);
 
 int getElapsedTime() {
   if (playing && !paused)
@@ -73,24 +65,13 @@ int getElapsedTime() {
     return (int)(pause_time - start_time);
 }
 
-char *get_filename(char *path) {
-  char *s = path + strlen(path);
-  while (*s != '/' && s != path)
-    --s;
-  // if (s == full_path) return s;
-  // char *t = s;
-  // memset(full_path, 0, s - full_path);
-  // strcat(full_path, s);
-  return *s == '/' ? s + 1 : s;
-}
-
-void InitComponents() {
-  buttons = calloc(b_count, sizeof(Button));
-  corners = calloc(b_count, sizeof(Rectangle *));
-  circles = calloc(b_count, sizeof(Circle *));
+void initComponents() {
+  ARR(buttons, b_count);
+  ARR(corners, b_count);
+  ARR(circles, b_count);
   for (int i = 0; i < b_count; ++i) {
-    corners[i] = calloc(4, sizeof(Button));
-    circles[i] = calloc(4, sizeof(Circle));
+    ARR(corners[i], 4);
+    ARR(circles[i], 4);
   }
   // buttons[0].header = strdup("Home");
 
@@ -130,9 +111,8 @@ void InitComponents() {
   float y = screen_height - 100;
   float e = screen_width - 100 - x;
 
-  play_button =
-      (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", 20) + 10, 30};
-  progress_bar = (Rectangle){x, y, e, 2};
+  play_button = (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", fontSize) + 10, 30};
+  progress_bar = (Rectangle){x, y, e, 6};
 }
 
 void drawButtons() {
@@ -144,116 +124,129 @@ void drawButtons() {
     }
     // float x = buttons[i].dim.x + 20;
     // float y = buttons[i].dim.y + 15;
-    // DrawText(buttons[i].header, x, y, 20, WHITE);
+    // DrawTextEx(font, buttons[i].header, (Vector2){x, y}, fontSize, spacing, WHITE);
   }
 }
 
 void drawDetails(char *file) {
   float x = progress_bar.x;
   float y = progress_bar.y;
-  float e = progress_bar.width;
+  float w = progress_bar.width;
   DrawRectangleRec(progress_bar, bar_bg);
-  DrawText(get_filename(file), x, y - 50, 20, WHITE);
-  DrawText(end, e + x - MeasureText(end, 15), y + 20, 20, WHITE);
+  DrawTextEx(font, getFilename(file), (Vector2){x, y - 50}, fontSize, spacing, WHITE);
+  DrawTextEx(font, end, (Vector2){w + x - MeasureText(end, 15), y + fontSize}, fontSize, spacing,
+             WHITE);
   DrawRectangleRec(play_button, main_bg);
-  DrawText(playing ? "Pause" : "Play", play_button.x + 5, play_button.y + 5, 20,
-           WHITE);
+  DrawTextEx(font, playing ? "Pause" : "Play", (Vector2){play_button.x + 5, play_button.y + 5},
+             fontSize, spacing, WHITE);
   Time t = {0};
   if (!done_playing)
-    t = get_time(getElapsedTime());
+    t = getTime(getElapsedTime());
   memset(buf, 0, 128);
   if (t.h)
     sprintf(buf, "%02d:%02d:%02d", t.h, t.m, t.s);
   else
     sprintf(buf, "%02d:%02d", t.m, t.s);
-  DrawText(buf, x, y + 25, 20, WHITE);
-  DrawTexture(texture, x + (e - x - texture.width) - 5, 40, WHITE);
-  float p = getElapsedTime() / get_sec(end_time);
+  DrawTextEx(font, buf, (Vector2){x, y + 25}, fontSize, spacing, WHITE);
+  DrawTexture(texture, x + (w - x - texture.width) - 5, 40, WHITE);
+  float p = getElapsedTime() / getSec(end_time);
   if (p > 1.0f)
     p = 1.0f;
-  progress_icon = (Circle){x + p * (e - x), y, 6};
+  progress_icon = (Circle){x + p * w, y + 2, 6};
   DrawCircle(progress_icon.x, progress_icon.y, progress_icon.r, WHITE);
 }
 
 void paintScreen() {
-  const int width = GetScreenWidth();
-  const int height = GetScreenHeight();
   Rectangle menu = {20, 20, 60, 60};
   DrawRectangleRec(menu, main_bg);
-  DrawText("Menu", 45, 35, 20, txt_fg);
+  DrawTextEx(font, "Menu", (Vector2){45, 35}, fontSize, spacing, txt_fg);
   drawButtons();
 }
 
 void freeResources() {
-  for (int i = 0; i < b_count; ++i) {
-    free(buttons[i].header);
-    free(corners[i]);
-    free(circles[i]);
+  for (int i = 0; i < b_count; ++i)
+    freeArrs(buttons[i].header, corners[i], circles[i]);
+  freeArrs(buttons, corners, circles, songs);
+  corners = NULL, circles = NULL, buttons = NULL, songs = NULL;
+  remove("/tmp/cover.jpg");
+  remove("/tmp/music.mp3");
+}
+
+int setupSongs(int argc, char ***argv) {
+  if (song_setup_done)
+    return 0;
+
+  ARR(songs, argc - 1);
+
+  for (int i = 0; i < argc - 1; ++i) {
+    songs[i].path = (*argv)[i + 1];
+    list_add_tail(&songs[i].node, &list);
   }
-  free(buttons);
-  free(corners);
-  free(circles);
-  corners = NULL;
-  circles = NULL;
-  buttons = NULL;
+
+  song_setup_done = 1;
+  return 0;
+}
+
+int setupScreen() {
+  if (screen_setup_done)
+    return 0;
+  memset(buf, 0, 128);
+  Song *song = list_entry(list.next, Song, node);
+  const char *file_path = song->path;
+  remove("/tmp/cover.jpg");
+  if (getImage(file_path, "/tmp/cover.jpg")) {
+    fprintf(stderr, "Not able to extract cover image.\n");
+    return 1;
+  }
+  Image cover = LoadImage("/tmp/cover.jpg");
+  ImageResize(&cover, (screen_height - 200) * cover.width / cover.height, screen_height - 200);
+  texture = LoadTextureFromImage(cover);
+  UnloadImage(cover);
+  cover = (Image){0};
+  InitAudioDevice();
+  memset(buf, 0, 128);
+  const char *dest = "/tmp/music.mp3";
+  remove(dest);
+  sprintf(buf, "ffmpeg -y -i \"%s\" -ar 48000 -ac 2 -codec:a libmp3lame -qscale:a 2 \"%s\"",
+          file_path, dest);
+  system(buf);
+  music = LoadMusicStream("/tmp/music.mp3");
+  music.looping = 0;
+  PlayMusicStream(music);
+  done_playing = 0;
+  SetMusicVolume(music, GetMasterVolume());
+  end_time = getTime(getAudioDuration(dest));
+  if (end_time.h)
+    sprintf(end, "%02d:%02d:%02d", end_time.h, end_time.m, end_time.s);
+  else
+    sprintf(end, "%02d:%02d", end_time.m, end_time.s);
+  start_time = GetTime();
+  pause_time = 0;
+  playing = 1;
+  screen_setup_done = 1;
+  return 0;
 }
 
 int main(int argc, char **argv) {
   // SetConfigFlags(FLAG_WINDOW_MAXIMIZED | FLAG_WINDOW_RESIZABLE);
   InitWindow(screen_width, screen_height, "Music Player");
   SetAudioStreamBufferSizeDefault(10000);
-  InitComponents();
-  if (argc == 2) {
-    memset(buf, 0, 128);
-    sprintf(buf, "ffmpeg -y -i %s -an -vcodec copy /tmp/cover.jpg", argv[1]);
-    system(buf);
-    Image cover = LoadImage("/tmp/cover.jpg");
-    ImageResize(&cover, (screen_height - 200) * cover.width / cover.height,
-                screen_height - 200);
-    texture = LoadTextureFromImage(cover);
-    UnloadImage(cover);
-    cover = (Image){0};
-    InitAudioDevice();
-    memset(buf, 0, 128);
-    sprintf(buf,
-            "ffmpeg -y -i %s -ar 48000 -ac 2 -codec:a libmp3lame -qscale:a 2 "
-            "/tmp/music.mp3",
-            argv[1]);
-    system(buf);
-    music = LoadMusicStream("/tmp/music.mp3");
-    music.looping = false;
-    PlayMusicStream(music);
-    SetMusicVolume(music, GetMasterVolume());
-    memset(buf, 0, 128);
-    sprintf(buf,
-            "ffprobe -v error -show_entries format=duration -of "
-            "default=noprint_wrappers=1:nokey=1 %s",
-            argv[1]);
-    FILE *fp = popen(buf, "r");
-    memset(buf, 0, 128);
-    fgets(buf, sizeof(buf), fp);
-    pclose(fp);
-    end_time = get_time((int)strtof(buf, NULL));
-    if (end_time.h)
-      sprintf(end, "%02d:%02d:%02d", end_time.h, end_time.m, end_time.s);
-    else
-      sprintf(end, "%02d:%02d", end_time.m, end_time.s);
-  }
+  initComponents();
+  font = LoadFont("/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf");
 
   while (!WindowShouldClose()) {
     mouse = GetMousePosition();
     BeginDrawing();
     ClearBackground(main_bg);
-    if (argc == 1 || argc > 2) {
+    if (argc < 2) {
       const char *msg = "Usage: mp <filename>";
       float x = screen_width / 2 - MeasureText(msg, 40);
       float y = screen_height / 2;
-      DrawText(msg, x, y, 40, WHITE);
+      DrawTextEx(font, msg, (Vector2){x, y}, 40, spacing, WHITE);
       Rectangle exit = {x + 150, y + 80, 95, 50};
       DrawRectangleRec(exit, main_bg);
-      DrawText("EXIT", x + 160, y + 90, 30, WHITE);
-      if (CheckCollisionPointRec(mouse, exit) &&
-              IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
+      DrawTextEx(font, "EXIT", (Vector2){x + 160, y + 90}, 30, spacing, WHITE);
+      if (CheckCollisionPointRec(mouse, exit) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
           IsKeyPressed(KEY_SPACE)) {
         freeResources();
         CloseWindow();
@@ -262,52 +255,60 @@ int main(int argc, char **argv) {
       EndDrawing();
       continue;
     }
+    if (setupSongs(argc, &argv))
+      exit(1);
+    if (list_empty(&list))
+      return 0;
+    if (setupScreen())
+      exit(1);
     UpdateMusicStream(music);
     if (!IsMusicStreamPlaying(music) && playing) {
-      playing = false;
-      paused = false;
-      done_playing = true;
+      StopMusicStream(music);
+      UnloadMusicStream(music);
+      list_del(list.next);
+      UnloadTexture(texture);
+      if (list_empty(&list)) {
+        playing = 0;
+        paused = 0;
+        done_playing = 1;
+      } else {
+        done_playing = 0;
+        playing = 1;
+        paused = 0;
+        screen_setup_done = 0;
+      }
+      continue;
     }
-    // paintScreen();
-    drawDetails(argv[1]);
-    if (CheckCollisionPointRec(mouse, play_button) &&
-            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+    paintScreen();
+    if (!list_empty(&list))
+      drawDetails(list_entry(list.next, Song, node)->path);
+    if (CheckCollisionPointRec(mouse, play_button) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
         IsKeyPressed(KEY_SPACE)) {
       if (!done_playing) {
         if (playing) {
           PauseMusicStream(music);
           pause_time = GetTime();
-          playing = false;
-          paused = true;
+          playing = 0;
+          paused = 1;
         } else if (paused) {
           ResumeMusicStream(music);
           start_time += (GetTime() - pause_time);
-          playing = true;
-          paused = false;
+          playing = 1;
+          paused = 0;
         }
-      } else {
-        StopMusicStream(music);
-        paused = true;
-        start_time = 0;
-        pause_time = 0;
       }
     }
-    if (CheckCollisionPointRec(mouse, progress_bar) &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (CheckCollisionPointRec(mouse, progress_bar) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       float p = (mouse.x - progress_bar.x) / progress_bar.width;
-      float new_time = get_sec(end_time) * p;
-      // SeekMusicStream(music, new_time);
-      SeekMusicStream(music, 0);
+      float new_time = getSec(end_time) * p;
+      SeekMusicStream(music, new_time);
       start_time = GetTime() - new_time;
-      paused = false;
-      playing = true;
+      paused = 0;
+      playing = 1;
     }
     EndDrawing();
   }
-  UnloadMusicStream(music);
   CloseAudioDevice();
-  system("rm /tmp/cover.jpg");
-  system("rm /tmp/music.mp3");
   freeResources();
   return 0;
 }
