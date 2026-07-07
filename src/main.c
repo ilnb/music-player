@@ -3,6 +3,7 @@
 #include <locale.h>
 #include <raylib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
   int l, r;
@@ -38,8 +39,19 @@ int *codepoints = NULL;
 Rectangle play_button = {0};
 Rectangle progress_bar = {0};
 Rectangle volume_bar = {0};
+Rectangle shuffle_btn = {0};
+Rectangle repeat_btn = {0};
+Rectangle prev_btn = {0};
+Rectangle next_btn = {0};
+int shuffle_mode = 0;
+int repeat_mode = 0;
 float volume = 1.0f;
 Music music;
+
+#define MAX_HISTORY 256
+Song *history[MAX_HISTORY];
+int history_count = 0;
+int history_idx = -1;
 const Color button_bg = (Color){0x15, 0x15, 0x15, 0xFF};
 const Color main_bg = (Color){0x20, 0x20, 0x20, 0xFF};
 const Color bar_bg = (Color){0x30, 0x30, 0x30, 0xFF};
@@ -62,6 +74,7 @@ int screen_setup_done = 0;
 int song_setup_done = 0;
 list_head list = LIST_HEAD_INIT(list);
 Song *current_song = NULL;
+Song *pending_song = NULL;
 int scroll_offset = 0;
 
 int getElapsedTime() {
@@ -118,13 +131,14 @@ void initComponents() {
   }
   */
 
-  float x = 300;
+  float x = 50;
   float y = screen_height - 100;
-  float e = screen_width - 340 - x;
+  float e = screen_width - 390;
 
-  play_button = (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", font_size) + 10, 30};
+  play_button = (Rectangle){x + e / 2 - 30, y + 20, 60, 30};
+  prev_btn = (Rectangle){play_button.x - 40, y + 20, 30, 30};
+  next_btn = (Rectangle){play_button.x + play_button.width + 10, y + 20, 30, 30};
   progress_bar = (Rectangle){x, y, e, 6};
-  volume_bar = (Rectangle){x + e / 2 + 150, y + 35, 100, 6};
 }
 
 void drawButtons() {
@@ -150,7 +164,19 @@ void drawDetails(char *file) {
   Vector2 end_size = MeasureTextEx(font, end, time_font_size, spacing);
   DrawTextEx(font, end, (Vector2){w + x - end_size.x, y + 25}, time_font_size, spacing, WHITE);
   DrawRectangleRec(play_button, main_bg);
-  DrawTextEx(font, playing ? "Pause" : "Play", (Vector2){play_button.x + 5, play_button.y + 5}, font_size, spacing, WHITE);
+  Vector2 play_size = MeasureTextEx(font, playing ? "Pause" : "Play", font_size, spacing);
+  DrawTextEx(font, playing ? "Pause" : "Play", (Vector2){play_button.x + (play_button.width - play_size.x)/2, play_button.y + (play_button.height - play_size.y)/2}, font_size, spacing, WHITE);
+  
+  Vector2 p1 = {prev_btn.x + 25, prev_btn.y + 5};
+  Vector2 p2 = {prev_btn.x + 5, prev_btn.y + 15};
+  Vector2 p3 = {prev_btn.x + 25, prev_btn.y + 25};
+  DrawTriangle(p1, p2, p3, WHITE);
+
+  Vector2 n1 = {next_btn.x + 5, next_btn.y + 5};
+  Vector2 n2 = {next_btn.x + 5, next_btn.y + 25};
+  Vector2 n3 = {next_btn.x + 25, next_btn.y + 15};
+  DrawTriangle(n1, n2, n3, WHITE);
+
   Time t = {0};
   if (!done_playing)
     t = getTime(getElapsedTime());
@@ -161,12 +187,25 @@ void drawDetails(char *file) {
     sprintf(buf, "%02d:%02d", t.m, t.s);
   DrawTextEx(font, buf, (Vector2){x, y + 25}, time_font_size, spacing, WHITE);
   DrawTexture(texture, x + (w - texture.width) / 2, 40, WHITE);
-  
+
+  volume_bar = (Rectangle){(w + x - end_size.x) - 130, y + 35, 100, 6};
   DrawTextEx(font, "Vol", (Vector2){volume_bar.x - 35, volume_bar.y - 8}, 20, spacing, WHITE);
   DrawRectangleRec(volume_bar, bar_bg);
   float vol_w = volume_bar.width * volume;
   DrawRectangleRec((Rectangle){volume_bar.x, volume_bar.y, vol_w, volume_bar.height}, button_bg);
   DrawCircle(volume_bar.x + vol_w, volume_bar.y + volume_bar.height / 2, 6, button_bg);
+
+  Vector2 curr_size = MeasureTextEx(font, buf, time_font_size, spacing);
+  shuffle_btn = (Rectangle){x + curr_size.x + 15, y + 24, 45, 24};
+  repeat_btn = (Rectangle){shuffle_btn.x + 55, y + 24, 40, 24};
+
+  DrawRectangleRec(shuffle_btn, shuffle_mode ? button_bg : main_bg);
+  Vector2 shuf_size = MeasureTextEx(font, "Shuf", 20, spacing);
+  DrawTextEx(font, "Shuf", (Vector2){shuffle_btn.x + (shuffle_btn.width - shuf_size.x)/2, shuffle_btn.y + (shuffle_btn.height - shuf_size.y)/2}, 20, spacing, WHITE);
+
+  DrawRectangleRec(repeat_btn, repeat_mode ? button_bg : main_bg);
+  Vector2 rep_size = MeasureTextEx(font, "Rep", 20, spacing);
+  DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x)/2, repeat_btn.y + (repeat_btn.height - rep_size.y)/2}, 20, spacing, WHITE);
 
   float p = getElapsedTime() / getSec(end_time);
   if (p > 1.0f)
@@ -297,7 +336,94 @@ void setupFont() {
   }
 }
 
+Song* getNextSong(Song *current) {
+  if (repeat_mode) return current;
+  if (shuffle_mode) {
+    int count = 0; Song *s;
+    list_for_each_entry(s, &list, node) count++;
+    if (count <= 1) return current;
+    int rand_idx = rand() % count;
+    Song *selected = NULL; int i = 0;
+    list_for_each_entry(s, &list, node) {
+      if (i == rand_idx) { selected = s; break; }
+      i++;
+    }
+    if (selected == current) {
+      list_head *next = selected->node.next;
+      if (next == &list) next = list.next;
+      selected = list_entry(next, Song, node);
+    }
+    return selected;
+  }
+  list_head *next = current->node.next;
+  if (next == &list) return NULL;
+  return list_entry(next, Song, node);
+}
+
+Song* getPrevSong(Song *current) {
+  if (repeat_mode) return current;
+  if (shuffle_mode) {
+    int count = 0; Song *s;
+    list_for_each_entry(s, &list, node) count++;
+    if (count <= 1) return current;
+    int rand_idx = rand() % count;
+    Song *selected = NULL; int i = 0;
+    list_for_each_entry(s, &list, node) {
+      if (i == rand_idx) { selected = s; break; }
+      i++;
+    }
+    if (selected == current) {
+      list_head *prev = selected->node.prev;
+      if (prev == &list) prev = list.prev;
+      selected = list_entry(prev, Song, node);
+    }
+    return selected;
+  }
+  list_head *prev = current->node.prev;
+  if (prev == &list) prev = list.prev;
+  return list_entry(prev, Song, node);
+}
+
+void playNext() {
+  if (history_idx < history_count - 1) {
+    history_idx++;
+    pending_song = history[history_idx];
+  } else {
+    Song *s = getNextSong(current_song);
+    if (!s) {
+      playing = 0; paused = 0; done_playing = 1; return;
+    }
+    if (history_count == MAX_HISTORY) {
+      memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song*));
+      history_count--;
+      history_idx--;
+    }
+    history[++history_idx] = s;
+    history_count = history_idx + 1;
+    pending_song = s;
+  }
+}
+
+void playPrev() {
+  if (history_idx > 0) {
+    history_idx--;
+    pending_song = history[history_idx];
+  } else {
+    Song *s = getPrevSong(current_song);
+    if (!s) return;
+    if (history_count == MAX_HISTORY) {
+      history_count--;
+    }
+    memmove(history + 1, history, history_count * sizeof(Song*));
+    history[0] = s;
+    history_count++;
+    history_idx = 0;
+    pending_song = s;
+  }
+}
+
 int main(int argc, char **argv) {
+  srand(time(NULL));
   setlocale(LC_ALL, "");
   // SetConfigFlags(FLAG_WINDOW_MAXIMIZED | FLAG_WINDOW_RESIZABLE);
   InitWindow(screen_width, screen_height, "Music Player");
@@ -310,7 +436,8 @@ int main(int argc, char **argv) {
   setupFont();
 
   InitAudioDevice();
-  Song *pending_song = NULL;
+  
+  // Force GLFW to load the system cursor (fixes invisible cursor bugs on Wayland/Linux)
   SetMouseCursor(MOUSE_CURSOR_ARROW);
 
   while (!WindowShouldClose()) {
@@ -340,6 +467,9 @@ int main(int argc, char **argv) {
 
     if (!current_song && !pending_song && argc >= 2) {
       pending_song = list_entry(list.next, Song, node);
+      history[0] = pending_song;
+      history_count = 1;
+      history_idx = 0;
     }
 
     if (pending_song) {
@@ -352,14 +482,7 @@ int main(int argc, char **argv) {
     }
 
     if (current_song && !IsMusicStreamPlaying(music) && playing) {
-      list_head *next = current_song->node.next;
-      if (next == &list) {
-        playing = 0;
-        paused = 0;
-        done_playing = 1;
-      } else {
-        pending_song = list_entry(next, Song, node);
-      }
+      playNext();
       continue;
     }
 
@@ -398,6 +521,12 @@ int main(int argc, char **argv) {
         item_bg = (Color){0x40, 0x40, 0x40, 0xFF}; // Hover effect
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && s != current_song) {
           pending_song = s;
+          if (history_count == MAX_HISTORY) {
+            memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song*));
+            history_idx--;
+          }
+          history[++history_idx] = s;
+          history_count = history_idx + 1;
         }
       }
       DrawRectangleRec(item_rect, item_bg);
@@ -436,20 +565,40 @@ int main(int argc, char **argv) {
       playing = 1;
     }
 
+    if (CheckCollisionPointRec(mouse, shuffle_btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      shuffle_mode = !shuffle_mode;
+      history_count = history_idx + 1;
+    }
+    if (CheckCollisionPointRec(mouse, repeat_btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      repeat_mode = !repeat_mode;
+      history_count = history_idx + 1;
+    }
+
+    if (CheckCollisionPointRec(mouse, prev_btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      playPrev();
+    }
+    if (CheckCollisionPointRec(mouse, next_btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      playNext();
+    }
+
     if (CheckCollisionPointRec(mouse, (Rectangle){volume_bar.x, volume_bar.y - 10, volume_bar.width, volume_bar.height + 20})) {
       if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
         volume = (mouse.x - volume_bar.x) / volume_bar.width;
-        if (volume < 0) volume = 0;
-        if (volume > 1) volume = 1;
+        if (volume < 0)
+          volume = 0;
+        if (volume > 1)
+          volume = 1;
         SetMasterVolume(volume);
       }
     }
 
     if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_LEFT)) {
       float new_time = getElapsedTime() + (IsKeyPressed(KEY_RIGHT) ? 10.0f : -10.0f);
-      if (new_time < 0) new_time = 0;
-      if (new_time > getSec(end_time)) new_time = getSec(end_time);
-      
+      if (new_time < 0)
+        new_time = 0;
+      if (new_time > getSec(end_time))
+        new_time = getSec(end_time);
+
       if (done_playing) {
         PlayMusicStream(music);
         done_playing = 0;
@@ -464,8 +613,10 @@ int main(int argc, char **argv) {
 
     if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_DOWN)) {
       volume += IsKeyPressed(KEY_UP) ? 0.05f : -0.05f;
-      if (volume < 0.0f) volume = 0.0f;
-      if (volume > 1.0f) volume = 1.0f;
+      if (volume < 0.0f)
+        volume = 0.0f;
+      if (volume > 1.0f)
+        volume = 1.0f;
       SetMasterVolume(volume);
     }
 
