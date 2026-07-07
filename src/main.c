@@ -159,8 +159,27 @@ void drawDetails(char *file) {
   float y = progress_bar.y;
   float w = progress_bar.width;
   DrawRectangleRec(progress_bar, bar_bg);
-  DrawTextEx(font, getFilename(file), (Vector2){x, y - 50}, font_size, spacing, WHITE);
-  int time_font_size = 22;
+  
+  char *title = getFilename(file);
+  Vector2 title_size = MeasureTextEx(font, title, font_size, spacing);
+  float title_x = x;
+  if (title_size.x > w) {
+    float overflow = title_size.x - w;
+    float speed = 40.0f;
+    float cycle = overflow / speed * 2.0f + 2.0f;
+    float t = fmod(GetTime(), cycle);
+    float offset = 0;
+    if (t < 1.0f) offset = 0;
+    else if (t < 1.0f + overflow / speed) offset = (t - 1.0f) * speed;
+    else if (t < 2.0f + overflow / speed) offset = overflow;
+    else offset = overflow - (t - (2.0f + overflow / speed)) * speed;
+    title_x -= offset;
+  }
+  
+  BeginScissorMode(x, 0, w, screen_height);
+  DrawTextEx(font, title, (Vector2){title_x, y - 50}, font_size, spacing, WHITE);
+  EndScissorMode();
+  int time_font_size = 24;
   Vector2 end_size = MeasureTextEx(font, end, time_font_size, spacing);
   DrawTextEx(font, end, (Vector2){w + x - end_size.x, y + 25}, time_font_size, spacing, WHITE);
   DrawRectangleRec(play_button, main_bg);
@@ -189,7 +208,7 @@ void drawDetails(char *file) {
   DrawTexture(texture, x + (w - texture.width) / 2, 40, WHITE);
 
   volume_bar = (Rectangle){(w + x - end_size.x) - 130, y + 35, 100, 6};
-  DrawTextEx(font, "Vol", (Vector2){volume_bar.x - 35, volume_bar.y - 8}, 20, spacing, WHITE);
+  DrawTextEx(font, "Vol", (Vector2){volume_bar.x - 35, volume_bar.y - 8}, 22, spacing, WHITE);
   DrawRectangleRec(volume_bar, bar_bg);
   float vol_w = volume_bar.width * volume;
   DrawRectangleRec((Rectangle){volume_bar.x, volume_bar.y, vol_w, volume_bar.height}, button_bg);
@@ -200,12 +219,12 @@ void drawDetails(char *file) {
   repeat_btn = (Rectangle){shuffle_btn.x + 55, y + 24, 40, 24};
 
   DrawRectangleRec(shuffle_btn, shuffle_mode ? button_bg : main_bg);
-  Vector2 shuf_size = MeasureTextEx(font, "Shuf", 20, spacing);
-  DrawTextEx(font, "Shuf", (Vector2){shuffle_btn.x + (shuffle_btn.width - shuf_size.x)/2, shuffle_btn.y + (shuffle_btn.height - shuf_size.y)/2}, 20, spacing, WHITE);
+  Vector2 shuf_size = MeasureTextEx(font, "Shuf", 22, spacing);
+  DrawTextEx(font, "Shuf", (Vector2){shuffle_btn.x + (shuffle_btn.width - shuf_size.x)/2, shuffle_btn.y + (shuffle_btn.height - shuf_size.y)/2}, 22, spacing, WHITE);
 
   DrawRectangleRec(repeat_btn, repeat_mode ? button_bg : main_bg);
-  Vector2 rep_size = MeasureTextEx(font, "Rep", 20, spacing);
-  DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x)/2, repeat_btn.y + (repeat_btn.height - rep_size.y)/2}, 20, spacing, WHITE);
+  Vector2 rep_size = MeasureTextEx(font, "Rep", 22, spacing);
+  DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x)/2, repeat_btn.y + (repeat_btn.height - rep_size.y)/2}, 22, spacing, WHITE);
 
   float p = getElapsedTime() / getSec(end_time);
   if (p > 1.0f)
@@ -530,7 +549,28 @@ int main(int argc, char **argv) {
         }
       }
       DrawRectangleRec(item_rect, item_bg);
-      DrawTextEx(font, fname, (Vector2){item_rect.x + 10, item_rect.y + 10}, 24, spacing, txt_fg);
+      
+      float max_w = item_rect.width - 20;
+      Vector2 tsize = MeasureTextEx(font, fname, 24, spacing);
+      float text_x = item_rect.x + 10;
+      
+      if (tsize.x > max_w && (CheckCollisionPointRec(mouse, item_rect) || s == current_song)) {
+        float overflow = tsize.x - max_w;
+        float speed = 40.0f;
+        float cycle = overflow / speed * 2.0f + 2.0f;
+        float t = fmod(GetTime(), cycle);
+        float offset = 0;
+        if (t < 1.0f) offset = 0;
+        else if (t < 1.0f + overflow / speed) offset = (t - 1.0f) * speed;
+        else if (t < 2.0f + overflow / speed) offset = overflow;
+        else offset = overflow - (t - (2.0f + overflow / speed)) * speed;
+        text_x -= offset;
+      }
+
+      BeginScissorMode(item_rect.x + 10, playlist_y, item_rect.width - 20, playlist_h);
+      DrawTextEx(font, fname, (Vector2){text_x, item_rect.y + 10}, 24, spacing, txt_fg);
+      BeginScissorMode(playlist_x, playlist_y, playlist_w, playlist_h);
+      
       item_y += 50;
     }
     EndScissorMode();
