@@ -207,15 +207,15 @@ int setupScreen() {
   memset(buf, 0, 128);
   const char *dest = "/tmp/music.mp3";
   remove(dest);
-  sprintf(buf, "ffmpeg -y -i \"%s\" -ar 48000 -ac 2 -codec:a libmp3lame -qscale:a 2 \"%s\"",
-          file_path, dest);
-  system(buf);
+  if (transcodeToMp3(file_path, dest) < 0) {
+    fprintf(stderr, "Failed to transcode %s to mp3\n", file_path);
+  }
   music = LoadMusicStream("/tmp/music.mp3");
   music.looping = 0;
   PlayMusicStream(music);
   done_playing = 0;
   SetMusicVolume(music, GetMasterVolume());
-  end_time = getTime(getAudioDuration(dest));
+  end_time = getTime(getAudioDuration(song->path));
   if (end_time.h)
     sprintf(end, "%02d:%02d:%02d", end_time.h, end_time.m, end_time.s);
   else
