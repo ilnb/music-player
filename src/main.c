@@ -4,6 +4,8 @@
 #include <raylib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
+#include <unistd.h>
 
 typedef struct {
   int l, r;
@@ -20,6 +22,10 @@ typedef struct {
 
 typedef struct {
   char *path;
+  int id;
+  int cover_status;
+  int audio_status;
+  int is_mp3;
   list_head node;
 } Song;
 
@@ -46,6 +52,8 @@ Rectangle next_btn = {0};
 int shuffle_mode = 0;
 int repeat_mode = 0;
 float volume = 1.0f;
+int is_dragging_time = 0;
+float drag_time_ratio = 0.0f;
 Music music;
 
 #define MAX_HISTORY 256
@@ -76,6 +84,67 @@ list_head list = LIST_HEAD_INIT(list);
 Song *current_song = NULL;
 Song *pending_song = NULL;
 int scroll_offset = 0;
+
+#define NUM_THREADS 4
+pthread_t workers[NUM_THREADS];
+pthread_mutex_t song_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void *process_songs(void *arg) {
+  while (1) {
+    Song *target_cover = NULL;
+    Song *target_audio = NULL;
+
+    pthread_mutex_lock(&song_mutex);
+    if (pending_song) {
+      if (pending_song->cover_status == 0) {
+        target_cover = pending_song;
+        target_cover->cover_status = 1;
+      }
+      if (pending_song->audio_status == 0) {
+        target_audio = pending_song;
+        target_audio->audio_status = 1;
+      }
+    }
+
+    if (!target_cover && !target_audio) {
+      Song *s;
+      list_for_each_entry(s, &list, node) {
+        if (s->cover_status == 0) {
+          target_cover = s;
+          target_cover->cover_status = 1;
+          break;
+        }
+      }
+    }
+    pthread_mutex_unlock(&song_mutex);
+
+    if (!target_cover && !target_audio) {
+      usleep(50000); // Wait 50ms
+      continue;
+    }
+
+    if (target_cover) {
+      char cover_path[256];
+      sprintf(cover_path, "/tmp/cover_%d.png", target_cover->id);
+      if (getImage(target_cover->path, cover_path) == 0) {
+        target_cover->cover_status = 2;
+      } else {
+        target_cover->cover_status = -1;
+      }
+    }
+
+    if (target_audio) {
+      char audio_path[256];
+      sprintf(audio_path, "/tmp/audio_%d.mp3", target_audio->id);
+      if (transcodeToMp3(target_audio->path, audio_path) == 0) {
+        target_audio->audio_status = 2;
+      } else {
+        target_audio->audio_status = -1;
+      }
+    }
+  }
+  return NULL;
+}
 
 int getElapsedTime() {
   if (done_playing)
@@ -226,7 +295,7 @@ void drawDetails(char *file) {
   Vector2 rep_size = MeasureTextEx(font, "Rep", 22, spacing);
   DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x)/2, repeat_btn.y + (repeat_btn.height - rep_size.y)/2}, 22, spacing, WHITE);
 
-  float p = getElapsedTime() / getSec(end_time);
+  float p = is_dragging_time ? drag_time_ratio : (getElapsedTime() / getSec(end_time));
   if (p > 1.0f)
     p = 1.0f;
   progress_icon = (Circle){x + p * w, y + 2, 6};
@@ -250,7 +319,7 @@ void freeResources() {
   */
   freeArrs(songs, codepoints);
   corners = NULL, circles = NULL, buttons = NULL, songs = NULL, codepoints = NULL;
-  remove("/tmp/cover.jpg");
+  remove("/tmp/cover.png");
   remove("/tmp/music.mp3");
 }
 
@@ -262,6 +331,18 @@ int setupSongs(int argc, char ***argv) {
 
   for (int i = 0; i < argc - 1; ++i) {
     songs[i].path = (*argv)[i + 1];
+    songs[i].id = i;
+    songs[i].cover_status = 0;
+    
+    int len = strlen(songs[i].path);
+    if (len >= 4 && strcasecmp(songs[i].path + len - 4, ".mp3") == 0) {
+      songs[i].is_mp3 = 1;
+      songs[i].audio_status = 2; // already ready!
+    } else {
+      songs[i].is_mp3 = 0;
+      songs[i].audio_status = 0;
+    }
+    
     list_add_tail(&songs[i].node, &list);
   }
 
@@ -278,20 +359,23 @@ int setupScreen(Song *song) {
     texture = (Texture2D){0};
   }
 
-  const char *file_path = song->path;
-  Image cover = getCoverImage(file_path);
-  if (cover.data != NULL) {
-    ImageResize(&cover, (screen_height - 200) * cover.width / cover.height, screen_height - 200);
-    texture = LoadTextureFromImage(cover);
-    UnloadImage(cover);
-  } else {
-    fprintf(stderr, "Not able to extract cover image for %s.\n", file_path);
+  char cover_path[256];
+  sprintf(cover_path, "/tmp/cover_%d.png", song->id);
+  
+  if (song->cover_status == 2) {
+    Image cover = LoadImage(cover_path);
+    if (cover.data != NULL) {
+      ImageResize(&cover, (screen_height - 200) * cover.width / cover.height, screen_height - 200);
+      texture = LoadTextureFromImage(cover);
+      UnloadImage(cover);
+    }
   }
 
-  const char *dest = "/tmp/music.mp3";
-  remove(dest);
-  if (transcodeToMp3(file_path, dest) < 0) {
-    fprintf(stderr, "Failed to transcode %s to mp3\n", file_path);
+  char audio_path[256];
+  if (song->is_mp3) {
+    strcpy(audio_path, song->path);
+  } else {
+    sprintf(audio_path, "/tmp/audio_%d.mp3", song->id);
   }
 
   if (current_song != NULL) {
@@ -299,7 +383,7 @@ int setupScreen(Song *song) {
     UnloadMusicStream(music);
   }
 
-  music = LoadMusicStream("/tmp/music.mp3");
+  music = LoadMusicStream(audio_path);
   music.looping = 0;
   PlayMusicStream(music);
   done_playing = 0;
@@ -455,9 +539,15 @@ int main(int argc, char **argv) {
   setupFont();
 
   InitAudioDevice();
-  
+
+  for (int i = 0; i < NUM_THREADS; i++) {
+    pthread_create(&workers[i], NULL, process_songs, NULL);
+  }
+
   // Force GLFW to load the system cursor (fixes invisible cursor bugs on Wayland/Linux)
   SetMouseCursor(MOUSE_CURSOR_ARROW);
+  
+  int is_dragging_volume = 0;
 
   while (!WindowShouldClose()) {
     mouse = GetMousePosition();
@@ -492,8 +582,17 @@ int main(int argc, char **argv) {
     }
 
     if (pending_song) {
-      setupScreen(pending_song);
-      pending_song = NULL;
+      if (current_song && playing && !paused) {
+        PauseMusicStream(music);
+        paused = 1;
+      }
+      if ((pending_song->audio_status == 2 || pending_song->audio_status == -1) && 
+          (pending_song->cover_status == 2 || pending_song->cover_status == -1)) {
+        setupScreen(pending_song);
+        pending_song = NULL;
+        paused = 0;
+        playing = 1;
+      }
     }
 
     if (current_song) {
@@ -590,9 +689,13 @@ int main(int argc, char **argv) {
         }
       }
     }
-    if (CheckCollisionPointRec(mouse, progress_bar) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-      float p = (mouse.x - progress_bar.x) / progress_bar.width;
-      float new_time = getSec(end_time) * p;
+    Rectangle expanded_prog_bar = {progress_bar.x, progress_bar.y - 10, progress_bar.width, progress_bar.height + 20};
+    if (CheckCollisionPointRec(mouse, expanded_prog_bar) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      is_dragging_time = 1;
+    }
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && is_dragging_time) {
+      is_dragging_time = 0;
+      float new_time = getSec(end_time) * drag_time_ratio;
       if (done_playing) {
         PlayMusicStream(music);
         done_playing = 0;
@@ -603,6 +706,12 @@ int main(int argc, char **argv) {
       start_time = GetTime() - new_time;
       paused = 0;
       playing = 1;
+    }
+
+    if (is_dragging_time) {
+      drag_time_ratio = (mouse.x - progress_bar.x) / progress_bar.width;
+      if (drag_time_ratio < 0) drag_time_ratio = 0;
+      if (drag_time_ratio > 1) drag_time_ratio = 1;
     }
 
     if (CheckCollisionPointRec(mouse, shuffle_btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
@@ -621,15 +730,21 @@ int main(int argc, char **argv) {
       playNext();
     }
 
-    if (CheckCollisionPointRec(mouse, (Rectangle){volume_bar.x, volume_bar.y - 10, volume_bar.width, volume_bar.height + 20})) {
-      if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-        volume = (mouse.x - volume_bar.x) / volume_bar.width;
-        if (volume < 0)
-          volume = 0;
-        if (volume > 1)
-          volume = 1;
-        SetMasterVolume(volume);
-      }
+    Rectangle expanded_vol_bar = {volume_bar.x, volume_bar.y - 10, volume_bar.width, volume_bar.height + 20};
+    if (CheckCollisionPointRec(mouse, expanded_vol_bar) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      is_dragging_volume = 1;
+    }
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+      is_dragging_volume = 0;
+    }
+    
+    if (is_dragging_volume) {
+      volume = (mouse.x - volume_bar.x) / volume_bar.width;
+      if (volume < 0)
+        volume = 0;
+      if (volume > 1)
+        volume = 1;
+      SetMasterVolume(volume);
     }
 
     if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_LEFT)) {

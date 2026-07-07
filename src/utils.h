@@ -39,18 +39,15 @@ SI float getAudioDuration(const char *file_path) {
   return duration;
 }
 
-SI Image getCoverImage(const char *input_file) {
-  Image img = {0};
+SI int getImage(const char *in_file, const char *out_file) {
   AVFormatContext *fmt_ctx = NULL;
-  if (avformat_open_input(&fmt_ctx, input_file, NULL, NULL) < 0) {
-    fprintf(stderr, "Could not open input file: %s\n", input_file);
-    return img;
+  if (avformat_open_input(&fmt_ctx, in_file, NULL, NULL) < 0) {
+    return -1;
   }
 
   if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-    fprintf(stderr, "Could not find stream info\n");
     avformat_close_input(&fmt_ctx);
-    return img;
+    return -1;
   }
 
   int video_stream_index = -1;
@@ -60,49 +57,39 @@ SI Image getCoverImage(const char *input_file) {
       break;
     }
   }
+
   if (video_stream_index == -1) {
-    fprintf(stderr, "No video stream found\n");
     avformat_close_input(&fmt_ctx);
-    return img;
+    return -1;
   }
 
   AVCodecParameters *codecpar = fmt_ctx->streams[video_stream_index]->codecpar;
   const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
-  if (!codec) {
-    fprintf(stderr, "Unsupported codec\n");
-    avformat_close_input(&fmt_ctx);
-    return img;
-  }
-
   AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
   avcodec_parameters_to_context(codec_ctx, codecpar);
-  if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
-    fprintf(stderr, "Failed to open codec\n");
-    avcodec_free_context(&codec_ctx);
-    avformat_close_input(&fmt_ctx);
-    return img;
-  }
+  avcodec_open2(codec_ctx, codec, NULL);
 
   AVPacket *packet = av_packet_alloc();
   AVFrame *frame = av_frame_alloc();
-  AVFrame *rgb_frame = av_frame_alloc();
+  int ret = -1;
 
-  int width = codec_ctx->width;
-  int height = codec_ctx->height;
-
-  int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, width, height, 1);
-  uint8_t *buffer = (uint8_t *)malloc(num_bytes);
-  av_image_fill_arrays(rgb_frame->data, rgb_frame->linesize, buffer, AV_PIX_FMT_RGBA, width, height, 1);
-
-  struct SwsContext *sws_ctx = sws_getContext(width, height, codec_ctx->pix_fmt, width, height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
-
-  int got_frame = 0;
   while (av_read_frame(fmt_ctx, packet) >= 0) {
     if (packet->stream_index == video_stream_index) {
-      if (avcodec_send_packet(codec_ctx, packet) == 0) {
-        if (avcodec_receive_frame(codec_ctx, frame) == 0) {
-          sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, height, rgb_frame->data, rgb_frame->linesize);
-          got_frame = 1;
+      if (avcodec_send_packet(codec_ctx, packet) >= 0) {
+        if (avcodec_receive_frame(codec_ctx, frame) >= 0) {
+          struct SwsContext *sws_ctx =
+              sws_getContext(frame->width, frame->height, codec_ctx->pix_fmt, frame->width, frame->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+
+          uint8_t *rgb_data = malloc(frame->width * frame->height * 4);
+          uint8_t *dest[4] = {rgb_data, NULL, NULL, NULL};
+          int dest_linesize[4] = {frame->width * 4, 0, 0, 0};
+          sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize, 0, frame->height, dest, dest_linesize);
+          sws_freeContext(sws_ctx);
+
+          Image img = {.data = rgb_data, .width = frame->width, .height = frame->height, .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, .mipmaps = 1};
+          ExportImage(img, out_file);
+          free(rgb_data);
+          ret = 0;
           av_packet_unref(packet);
           break;
         }
@@ -111,24 +98,11 @@ SI Image getCoverImage(const char *input_file) {
     av_packet_unref(packet);
   }
 
-  if (got_frame) {
-    img.data = buffer;
-    img.width = width;
-    img.height = height;
-    img.mipmaps = 1;
-    img.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-  } else {
-    free(buffer);
-  }
-
-  av_packet_free(&packet);
   av_frame_free(&frame);
-  av_frame_free(&rgb_frame);
-  sws_freeContext(sws_ctx);
+  av_packet_free(&packet);
   avcodec_free_context(&codec_ctx);
   avformat_close_input(&fmt_ctx);
-
-  return img;
+  return ret;
 }
 
 typedef struct {
