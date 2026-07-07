@@ -1,5 +1,6 @@
 #include "list.h"
 #include "utils.h"
+#include <locale.h>
 #include <raylib.h>
 #include <string.h>
 
@@ -31,8 +32,9 @@ Circle progress_icon = {0};
 Rectangle **corners;
 Song *songs;
 Font font;
-int fontSize = 25;
+int font_size = 25;
 int spacing = 2;
+int *codepoints = NULL;
 Rectangle play_button = {0};
 Rectangle progress_bar = {0};
 Music music;
@@ -57,8 +59,12 @@ int done_playing = 0;
 int screen_setup_done = 0;
 int song_setup_done = 0;
 list_head list = LIST_HEAD_INIT(list);
+Song *current_song = NULL;
+int scroll_offset = 0;
 
 int getElapsedTime() {
+  if (done_playing)
+    return 0;
   if (playing && !paused)
     return (int)(GetTime() - start_time);
   else
@@ -66,6 +72,7 @@ int getElapsedTime() {
 }
 
 void initComponents() {
+  /*
   ARR(buttons, b_count);
   ARR(corners, b_count);
   ARR(circles, b_count);
@@ -107,11 +114,13 @@ void initComponents() {
       circles[i][j].r = b / 5;
     }
   }
-  float x = buttons[0].dim.x + buttons[0].dim.width + 50;
-  float y = screen_height - 100;
-  float e = screen_width - 100 - x;
+  */
 
-  play_button = (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", fontSize) + 10, 30};
+  float x = 300;
+  float y = screen_height - 100;
+  float e = screen_width - 340 - x;
+
+  play_button = (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", font_size) + 10, 30};
   progress_bar = (Rectangle){x, y, e, 6};
 }
 
@@ -133,12 +142,12 @@ void drawDetails(char *file) {
   float y = progress_bar.y;
   float w = progress_bar.width;
   DrawRectangleRec(progress_bar, bar_bg);
-  DrawTextEx(font, getFilename(file), (Vector2){x, y - 50}, fontSize, spacing, WHITE);
-  DrawTextEx(font, end, (Vector2){w + x - MeasureText(end, 15), y + fontSize}, fontSize, spacing,
-             WHITE);
+  DrawTextEx(font, getFilename(file), (Vector2){x, y - 50}, font_size, spacing, WHITE);
+  int time_font_size = 22;
+  Vector2 end_size = MeasureTextEx(font, end, time_font_size, spacing);
+  DrawTextEx(font, end, (Vector2){w + x - end_size.x, y + 25}, time_font_size, spacing, WHITE);
   DrawRectangleRec(play_button, main_bg);
-  DrawTextEx(font, playing ? "Pause" : "Play", (Vector2){play_button.x + 5, play_button.y + 5},
-             fontSize, spacing, WHITE);
+  DrawTextEx(font, playing ? "Pause" : "Play", (Vector2){play_button.x + 5, play_button.y + 5}, font_size, spacing, WHITE);
   Time t = {0};
   if (!done_playing)
     t = getTime(getElapsedTime());
@@ -147,8 +156,8 @@ void drawDetails(char *file) {
     sprintf(buf, "%02d:%02d:%02d", t.h, t.m, t.s);
   else
     sprintf(buf, "%02d:%02d", t.m, t.s);
-  DrawTextEx(font, buf, (Vector2){x, y + 25}, fontSize, spacing, WHITE);
-  DrawTexture(texture, x + (w - x - texture.width) - 5, 40, WHITE);
+  DrawTextEx(font, buf, (Vector2){x, y + 25}, time_font_size, spacing, WHITE);
+  DrawTexture(texture, x + (w - texture.width) / 2, 40, WHITE);
   float p = getElapsedTime() / getSec(end_time);
   if (p > 1.0f)
     p = 1.0f;
@@ -157,17 +166,22 @@ void drawDetails(char *file) {
 }
 
 void paintScreen() {
+  /*
   Rectangle menu = {20, 20, 60, 60};
   DrawRectangleRec(menu, main_bg);
-  DrawTextEx(font, "Menu", (Vector2){45, 35}, fontSize, spacing, txt_fg);
+  DrawTextEx(font, "Menu", (Vector2){45, 35}, font_size, spacing, txt_fg);
   drawButtons();
+  */
 }
 
 void freeResources() {
+  /*
   for (int i = 0; i < b_count; ++i)
     freeArrs(buttons[i].header, corners[i], circles[i]);
-  freeArrs(buttons, corners, circles, songs);
-  corners = NULL, circles = NULL, buttons = NULL, songs = NULL;
+  freeArrs(buttons, corners, circles, songs, codepoints);
+  */
+  freeArrs(songs, codepoints);
+  corners = NULL, circles = NULL, buttons = NULL, songs = NULL, codepoints = NULL;
   remove("/tmp/cover.jpg");
   remove("/tmp/music.mp3");
 }
@@ -187,29 +201,36 @@ int setupSongs(int argc, char ***argv) {
   return 0;
 }
 
-int setupScreen() {
-  if (screen_setup_done)
-    return 0;
-  memset(buf, 0, 128);
-  Song *song = list_entry(list.next, Song, node);
-  const char *file_path = song->path;
-  remove("/tmp/cover.jpg");
-  if (getImage(file_path, "/tmp/cover.jpg")) {
-    fprintf(stderr, "Not able to extract cover image.\n");
+int setupScreen(Song *song) {
+  if (!song)
     return 1;
+
+  if (texture.id != 0) {
+    UnloadTexture(texture);
+    texture = (Texture2D){0};
   }
-  Image cover = LoadImage("/tmp/cover.jpg");
-  ImageResize(&cover, (screen_height - 200) * cover.width / cover.height, screen_height - 200);
-  texture = LoadTextureFromImage(cover);
-  UnloadImage(cover);
-  cover = (Image){0};
-  InitAudioDevice();
-  memset(buf, 0, 128);
+
+  const char *file_path = song->path;
+  Image cover = getCoverImage(file_path);
+  if (cover.data != NULL) {
+    ImageResize(&cover, (screen_height - 200) * cover.width / cover.height, screen_height - 200);
+    texture = LoadTextureFromImage(cover);
+    UnloadImage(cover);
+  } else {
+    fprintf(stderr, "Not able to extract cover image for %s.\n", file_path);
+  }
+
   const char *dest = "/tmp/music.mp3";
   remove(dest);
   if (transcodeToMp3(file_path, dest) < 0) {
     fprintf(stderr, "Failed to transcode %s to mp3\n", file_path);
   }
+
+  if (current_song != NULL) {
+    StopMusicStream(music);
+    UnloadMusicStream(music);
+  }
+
   music = LoadMusicStream("/tmp/music.mp3");
   music.looping = 0;
   PlayMusicStream(music);
@@ -223,22 +244,70 @@ int setupScreen() {
   start_time = GetTime();
   pause_time = 0;
   playing = 1;
+  paused = 0;
+  current_song = song;
   screen_setup_done = 1;
   return 0;
 }
 
+void setupFont() {
+  int max_codepoints = 2000;
+  codepoints = malloc(max_codepoints * sizeof(int));
+  int total = 0;
+
+  // Basic Latin
+  for (int i = 32; i <= 126; i++) {
+    codepoints[total++] = i;
+  }
+
+  Song *s;
+  list_for_each_entry(s, &list, node) {
+    const char *text = s->path;
+    int bytes = 0;
+    while (*text != '\0') {
+      int codepoint = GetCodepoint(text, &bytes);
+      int found = 0;
+      for (int j = 0; j < total; j++) {
+        if (codepoints[j] == codepoint) {
+          found = 1;
+          break;
+        }
+      }
+      if (!found && total < max_codepoints) {
+        codepoints[total++] = codepoint;
+      }
+      text += bytes;
+    }
+  }
+
+  char *font_path = "assets/NotoSansJP-Regular.otf";
+  font = LoadFontEx(font_path, font_size, codepoints, total);
+  if (font.texture.id == 0) {
+    fprintf(stderr, "Failed to load font from %s\n", font_path);
+  }
+}
+
 int main(int argc, char **argv) {
+  setlocale(LC_ALL, "");
   // SetConfigFlags(FLAG_WINDOW_MAXIMIZED | FLAG_WINDOW_RESIZABLE);
   InitWindow(screen_width, screen_height, "Music Player");
   SetAudioStreamBufferSizeDefault(10000);
   initComponents();
-  font = LoadFont("/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf");
+  if (argc >= 2) {
+    if (setupSongs(argc, &argv))
+      exit(1);
+  }
+  setupFont();
+
+  InitAudioDevice();
+  Song *pending_song = NULL;
 
   while (!WindowShouldClose()) {
     mouse = GetMousePosition();
-    BeginDrawing();
-    ClearBackground(main_bg);
+
     if (argc < 2) {
+      BeginDrawing();
+      ClearBackground(main_bg);
       const char *msg = "Usage: mp <filename>";
       float x = screen_width / 2 - MeasureText(msg, 40);
       float y = screen_height / 2;
@@ -246,8 +315,7 @@ int main(int argc, char **argv) {
       Rectangle exit = {x + 150, y + 80, 95, 50};
       DrawRectangleRec(exit, main_bg);
       DrawTextEx(font, "EXIT", (Vector2){x + 160, y + 90}, 30, spacing, WHITE);
-      if (CheckCollisionPointRec(mouse, exit) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
-          IsKeyPressed(KEY_SPACE)) {
+      if (CheckCollisionPointRec(mouse, exit) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsKeyPressed(KEY_SPACE)) {
         freeResources();
         CloseWindow();
         return 0;
@@ -255,35 +323,79 @@ int main(int argc, char **argv) {
       EndDrawing();
       continue;
     }
-    if (setupSongs(argc, &argv))
-      exit(1);
-    if (list_empty(&list))
+
+    if (argc >= 2 && list_empty(&list))
       return 0;
-    if (setupScreen())
-      exit(1);
-    UpdateMusicStream(music);
-    if (!IsMusicStreamPlaying(music) && playing) {
-      StopMusicStream(music);
-      UnloadMusicStream(music);
-      list_del(list.next);
-      UnloadTexture(texture);
-      if (list_empty(&list)) {
+
+    if (!current_song && !pending_song && argc >= 2) {
+      pending_song = list_entry(list.next, Song, node);
+    }
+
+    if (pending_song) {
+      setupScreen(pending_song);
+      pending_song = NULL;
+    }
+
+    if (current_song) {
+      UpdateMusicStream(music);
+    }
+
+    if (current_song && !IsMusicStreamPlaying(music) && playing) {
+      list_head *next = current_song->node.next;
+      if (next == &list) {
         playing = 0;
         paused = 0;
         done_playing = 1;
       } else {
-        done_playing = 0;
-        playing = 1;
-        paused = 0;
-        screen_setup_done = 0;
+        pending_song = list_entry(next, Song, node);
       }
       continue;
     }
+
+    BeginDrawing();
+    ClearBackground(main_bg);
+
     paintScreen();
-    if (!list_empty(&list))
-      drawDetails(list_entry(list.next, Song, node)->path);
-    if (CheckCollisionPointRec(mouse, play_button) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
-        IsKeyPressed(KEY_SPACE)) {
+    if (current_song) {
+      drawDetails(current_song->path);
+    }
+
+    // Draw Playlist
+    float playlist_w = 300;
+    float playlist_x = screen_width - playlist_w - 20;
+    float playlist_y = 20;
+    float playlist_h = screen_height - 40;
+
+    DrawRectangleRec((Rectangle){playlist_x, playlist_y, playlist_w, playlist_h}, bar_bg);
+
+    float scroll_speed = GetMouseWheelMove() * 30.0f;
+    if (scroll_speed != 0 && CheckCollisionPointRec(mouse, (Rectangle){playlist_x, playlist_y, playlist_w, playlist_h})) {
+      scroll_offset += scroll_speed;
+    }
+    if (scroll_offset > 0)
+      scroll_offset = 0;
+
+    BeginScissorMode(playlist_x, playlist_y, playlist_w, playlist_h);
+    int item_y = playlist_y + 10 + scroll_offset;
+    Song *s;
+    list_for_each_entry(s, &list, node) {
+      char *fname = getFilename(s->path);
+      Rectangle item_rect = {playlist_x + 10, item_y, playlist_w - 20, 40};
+
+      Color item_bg = (s == current_song) ? button_bg : main_bg;
+      if (CheckCollisionPointRec(mouse, item_rect)) {
+        item_bg = (Color){0x40, 0x40, 0x40, 0xFF}; // Hover effect
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && s != current_song) {
+          pending_song = s;
+        }
+      }
+      DrawRectangleRec(item_rect, item_bg);
+      DrawTextEx(font, fname, (Vector2){item_rect.x + 10, item_rect.y + 10}, 24, spacing, txt_fg);
+      item_y += 50;
+    }
+    EndScissorMode();
+
+    if (CheckCollisionPointRec(mouse, play_button) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_SPACE)) {
       if (!done_playing) {
         if (playing) {
           PauseMusicStream(music);
@@ -301,6 +413,12 @@ int main(int argc, char **argv) {
     if (CheckCollisionPointRec(mouse, progress_bar) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       float p = (mouse.x - progress_bar.x) / progress_bar.width;
       float new_time = getSec(end_time) * p;
+      if (done_playing) {
+        PlayMusicStream(music);
+        done_playing = 0;
+      } else if (paused) {
+        ResumeMusicStream(music);
+      }
       SeekMusicStream(music, new_time);
       start_time = GetTime() - new_time;
       paused = 0;

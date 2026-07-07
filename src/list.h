@@ -18,13 +18,9 @@ static inline void __list_add(list_head *new_node, list_head *prev, list_head *n
   next->prev = new_node;
 }
 
-static inline void list_add_head(list_head *new_node, list_head *head) {
-  __list_add(new_node, head, head->next);
-}
+static inline void list_add_head(list_head *new_node, list_head *head) { __list_add(new_node, head, head->next); }
 
-static inline void list_add_tail(list_head *new_node, list_head *head) {
-  __list_add(new_node, head->prev, head);
-}
+static inline void list_add_tail(list_head *new_node, list_head *head) { __list_add(new_node, head->prev, head); }
 
 static inline void __list_del(list_head *prev, list_head *next) {
   prev->next = next;
@@ -37,17 +33,11 @@ static inline void list_del(list_head *entry) {
   entry->prev = (list_head *)LIST_POISON2;
 }
 
-static inline int list_is_first(const list_head *list, const list_head *head) {
-  return list->prev == head;
-}
+static inline int list_is_first(const list_head *list, const list_head *head) { return list->prev == head; }
 
-static inline int list_is_last(const list_head *list, const list_head *head) {
-  return list->next == head;
-}
+static inline int list_is_last(const list_head *list, const list_head *head) { return list->next == head; }
 
-static inline int list_is_head(const list_head *list, const list_head *head) {
-  return list == head;
-}
+static inline int list_is_head(const list_head *list, const list_head *head) { return list == head; }
 
 static inline int list_empty(const list_head *head) { return head->next == head; }
 
@@ -61,16 +51,11 @@ static inline int list_empty(const list_head *head) { return head->next == head;
 
 #define list_entry_is_head(pos, head, member) (&(pos)->member == head)
 
-#define list_for_each_entry(pos, head, member)                                                     \
-  for (pos = list_first_entry(head, typeof(*pos), member); !list_entry_is_head(pos, head, member); \
-       pos = list_next_entry(pos, member))
+#define list_for_each_entry(pos, head, member) for (pos = list_first_entry(head, typeof(*pos), member); !list_entry_is_head(pos, head, member); pos = list_next_entry(pos, member))
 
-#define list_for_each_rev(pos, head, member)                                                       \
-  for (pos = list_last_entry(head, typeof(*pos), member); !list_entry_is_head(pos, head, member);  \
-       pos = list_prev_entry(pos, member))
+#define list_for_each_rev(pos, head, member) for (pos = list_last_entry(head, typeof(*pos), member); !list_entry_is_head(pos, head, member); pos = list_prev_entry(pos, member))
 
-#define list_for_each_entry_safe(pos, n, head, member)                                             \
-  for (pos = list_first_entry(head, typeof(*pos), member), n = list_next_entry(pos, member);       \
-       !list_entry_is_head(pos, head, member); p = n, n = list_next_entry(pos, member))
+#define list_for_each_entry_safe(pos, n, head, member)                                                                                                                             \
+  for (pos = list_first_entry(head, typeof(*pos), member), n = list_next_entry(pos, member); !list_entry_is_head(pos, head, member); p = n, n = list_next_entry(pos, member))
 
 #endif /* _LIST_H */
