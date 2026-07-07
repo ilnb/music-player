@@ -37,6 +37,8 @@ int spacing = 2;
 int *codepoints = NULL;
 Rectangle play_button = {0};
 Rectangle progress_bar = {0};
+Rectangle volume_bar = {0};
+float volume = 1.0f;
 Music music;
 const Color button_bg = (Color){0x15, 0x15, 0x15, 0xFF};
 const Color main_bg = (Color){0x20, 0x20, 0x20, 0xFF};
@@ -122,6 +124,7 @@ void initComponents() {
 
   play_button = (Rectangle){x + e / 2 - 5, y + 25, MeasureText("Pause", font_size) + 10, 30};
   progress_bar = (Rectangle){x, y, e, 6};
+  volume_bar = (Rectangle){x + e / 2 + 150, y + 35, 100, 6};
 }
 
 void drawButtons() {
@@ -158,6 +161,13 @@ void drawDetails(char *file) {
     sprintf(buf, "%02d:%02d", t.m, t.s);
   DrawTextEx(font, buf, (Vector2){x, y + 25}, time_font_size, spacing, WHITE);
   DrawTexture(texture, x + (w - texture.width) / 2, 40, WHITE);
+  
+  DrawTextEx(font, "Vol", (Vector2){volume_bar.x - 35, volume_bar.y - 8}, 20, spacing, WHITE);
+  DrawRectangleRec(volume_bar, bar_bg);
+  float vol_w = volume_bar.width * volume;
+  DrawRectangleRec((Rectangle){volume_bar.x, volume_bar.y, vol_w, volume_bar.height}, button_bg);
+  DrawCircle(volume_bar.x + vol_w, volume_bar.y + volume_bar.height / 2, 6, button_bg);
+
   float p = getElapsedTime() / getSec(end_time);
   if (p > 1.0f)
     p = 1.0f;
@@ -235,7 +245,8 @@ int setupScreen(Song *song) {
   music.looping = 0;
   PlayMusicStream(music);
   done_playing = 0;
-  SetMusicVolume(music, GetMasterVolume());
+  SetMasterVolume(volume);
+  SetMusicVolume(music, 1.0f);
   end_time = getTime(getAudioDuration(song->path));
   if (end_time.h)
     sprintf(end, "%02d:%02d:%02d", end_time.h, end_time.m, end_time.s);
@@ -255,7 +266,6 @@ void setupFont() {
   codepoints = malloc(max_codepoints * sizeof(int));
   int total = 0;
 
-  // Basic Latin
   for (int i = 32; i <= 126; i++) {
     codepoints[total++] = i;
   }
@@ -301,6 +311,7 @@ int main(int argc, char **argv) {
 
   InitAudioDevice();
   Song *pending_song = NULL;
+  SetMouseCursor(MOUSE_CURSOR_ARROW);
 
   while (!WindowShouldClose()) {
     mouse = GetMousePosition();
@@ -424,6 +435,40 @@ int main(int argc, char **argv) {
       paused = 0;
       playing = 1;
     }
+
+    if (CheckCollisionPointRec(mouse, (Rectangle){volume_bar.x, volume_bar.y - 10, volume_bar.width, volume_bar.height + 20})) {
+      if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
+        volume = (mouse.x - volume_bar.x) / volume_bar.width;
+        if (volume < 0) volume = 0;
+        if (volume > 1) volume = 1;
+        SetMasterVolume(volume);
+      }
+    }
+
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_LEFT)) {
+      float new_time = getElapsedTime() + (IsKeyPressed(KEY_RIGHT) ? 10.0f : -10.0f);
+      if (new_time < 0) new_time = 0;
+      if (new_time > getSec(end_time)) new_time = getSec(end_time);
+      
+      if (done_playing) {
+        PlayMusicStream(music);
+        done_playing = 0;
+      } else if (paused) {
+        ResumeMusicStream(music);
+      }
+      SeekMusicStream(music, new_time);
+      start_time = GetTime() - new_time;
+      paused = 0;
+      playing = 1;
+    }
+
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_DOWN)) {
+      volume += IsKeyPressed(KEY_UP) ? 0.05f : -0.05f;
+      if (volume < 0.0f) volume = 0.0f;
+      if (volume > 1.0f) volume = 1.0f;
+      SetMasterVolume(volume);
+    }
+
     EndDrawing();
   }
   CloseAudioDevice();
