@@ -337,7 +337,7 @@ int setupSongs(int argc, char ***argv) {
     int len = strlen(songs[i].path);
     if (len >= 4 && strcasecmp(songs[i].path + len - 4, ".mp3") == 0) {
       songs[i].is_mp3 = 1;
-      songs[i].audio_status = 2; // already ready!
+      songs[i].audio_status = 2; // already ready
     } else {
       songs[i].is_mp3 = 0;
       songs[i].audio_status = 0;
@@ -544,7 +544,6 @@ int main(int argc, char **argv) {
     pthread_create(&workers[i], NULL, process_songs, NULL);
   }
 
-  // Force GLFW to load the system cursor (fixes invisible cursor bugs on Wayland/Linux)
   SetMouseCursor(MOUSE_CURSOR_ARROW);
   
   int is_dragging_volume = 0;
