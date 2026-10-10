@@ -1,10 +1,10 @@
 #include "list.h"
 #include "utils.h"
 #include <locale.h>
+#include <pthread.h>
 #include <raylib.h>
 #include <string.h>
 #include <time.h>
-#include <pthread.h>
 #include <unistd.h>
 
 typedef struct {
@@ -228,7 +228,7 @@ void drawDetails(char *file) {
   float y = progress_bar.y;
   float w = progress_bar.width;
   DrawRectangleRec(progress_bar, bar_bg);
-  
+
   char *title = getFilename(file);
   Vector2 title_size = MeasureTextEx(font, title, font_size, spacing);
   float title_x = x;
@@ -244,7 +244,7 @@ void drawDetails(char *file) {
     else offset = overflow - (t - (2.0f + overflow / speed)) * speed;
     title_x -= offset;
   }
-  
+
   BeginScissorMode(x, 0, w, screen_height);
   DrawTextEx(font, title, (Vector2){title_x, y - 50}, font_size, spacing, WHITE);
   EndScissorMode();
@@ -289,11 +289,11 @@ void drawDetails(char *file) {
 
   DrawRectangleRec(shuffle_btn, shuffle_mode ? button_bg : main_bg);
   Vector2 shuf_size = MeasureTextEx(font, "Shuf", 22, spacing);
-  DrawTextEx(font, "Shuf", (Vector2){shuffle_btn.x + (shuffle_btn.width - shuf_size.x)/2, shuffle_btn.y + (shuffle_btn.height - shuf_size.y)/2}, 22, spacing, WHITE);
+  DrawTextEx(font, "Shuf", (Vector2){shuffle_btn.x + (shuffle_btn.width - shuf_size.x) / 2, shuffle_btn.y + (shuffle_btn.height - shuf_size.y) / 2}, 22, spacing, WHITE);
 
   DrawRectangleRec(repeat_btn, repeat_mode ? button_bg : main_bg);
   Vector2 rep_size = MeasureTextEx(font, "Rep", 22, spacing);
-  DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x)/2, repeat_btn.y + (repeat_btn.height - rep_size.y)/2}, 22, spacing, WHITE);
+  DrawTextEx(font, "Rep", (Vector2){repeat_btn.x + (repeat_btn.width - rep_size.x) / 2, repeat_btn.y + (repeat_btn.height - rep_size.y) / 2}, 22, spacing, WHITE);
 
   float p = is_dragging_time ? drag_time_ratio : (getElapsedTime() / getSec(end_time));
   if (p > 1.0f)
@@ -333,7 +333,7 @@ int setupSongs(int argc, char ***argv) {
     songs[i].path = (*argv)[i + 1];
     songs[i].id = i;
     songs[i].cover_status = 0;
-    
+
     int len = strlen(songs[i].path);
     if (len >= 4 && strcasecmp(songs[i].path + len - 4, ".mp3") == 0) {
       songs[i].is_mp3 = 1;
@@ -342,7 +342,7 @@ int setupSongs(int argc, char ***argv) {
       songs[i].is_mp3 = 0;
       songs[i].audio_status = 0;
     }
-    
+
     list_add_tail(&songs[i].node, &list);
   }
 
@@ -361,7 +361,7 @@ int setupScreen(Song *song) {
 
   char cover_path[256];
   sprintf(cover_path, "/tmp/cover_%d.png", song->id);
-  
+
   if (song->cover_status == 2) {
     Image cover = LoadImage(cover_path);
     if (cover.data != NULL) {
@@ -439,7 +439,7 @@ void setupFont() {
   }
 }
 
-Song* getNextSong(Song *current) {
+Song *getNextSong(Song *current) {
   if (repeat_mode) return current;
   if (shuffle_mode) {
     int count = 0; Song *s;
@@ -463,7 +463,7 @@ Song* getNextSong(Song *current) {
   return list_entry(next, Song, node);
 }
 
-Song* getPrevSong(Song *current) {
+Song *getPrevSong(Song *current) {
   if (repeat_mode) return current;
   if (shuffle_mode) {
     int count = 0; Song *s;
@@ -497,7 +497,7 @@ void playNext() {
       playing = 0; paused = 0; done_playing = 1; return;
     }
     if (history_count == MAX_HISTORY) {
-      memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song*));
+      memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song *));
       history_count--;
       history_idx--;
     }
@@ -517,7 +517,7 @@ void playPrev() {
     if (history_count == MAX_HISTORY) {
       history_count--;
     }
-    memmove(history + 1, history, history_count * sizeof(Song*));
+    memmove(history + 1, history, history_count * sizeof(Song *));
     history[0] = s;
     history_count++;
     history_idx = 0;
@@ -545,7 +545,7 @@ int main(int argc, char **argv) {
   }
 
   SetMouseCursor(MOUSE_CURSOR_ARROW);
-  
+
   int is_dragging_volume = 0;
 
   while (!WindowShouldClose()) {
@@ -639,7 +639,7 @@ int main(int argc, char **argv) {
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && s != current_song) {
           pending_song = s;
           if (history_count == MAX_HISTORY) {
-            memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song*));
+            memmove(history, history + 1, (MAX_HISTORY - 1) * sizeof(Song *));
             history_idx--;
           }
           history[++history_idx] = s;
@@ -647,11 +647,11 @@ int main(int argc, char **argv) {
         }
       }
       DrawRectangleRec(item_rect, item_bg);
-      
+
       float max_w = item_rect.width - 20;
       Vector2 tsize = MeasureTextEx(font, fname, 24, spacing);
       float text_x = item_rect.x + 10;
-      
+
       if (tsize.x > max_w && (CheckCollisionPointRec(mouse, item_rect) || s == current_song)) {
         float overflow = tsize.x - max_w;
         float speed = 40.0f;
@@ -668,7 +668,7 @@ int main(int argc, char **argv) {
       BeginScissorMode(item_rect.x + 10, playlist_y, item_rect.width - 20, playlist_h);
       DrawTextEx(font, fname, (Vector2){text_x, item_rect.y + 10}, 24, spacing, txt_fg);
       BeginScissorMode(playlist_x, playlist_y, playlist_w, playlist_h);
-      
+
       item_y += 50;
     }
     EndScissorMode();
@@ -736,7 +736,7 @@ int main(int argc, char **argv) {
     if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
       is_dragging_volume = 0;
     }
-    
+
     if (is_dragging_volume) {
       volume = (mouse.x - volume_bar.x) / volume_bar.width;
       if (volume < 0)
